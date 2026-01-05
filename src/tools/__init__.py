@@ -63,7 +63,8 @@ def _auto_load_tools():
     def _import_submodules(path, package_name):
         # Import all Python modules in this directory
         for importer, modname, ispkg in pkgutil.iter_modules([str(path)]):
-            if modname != '__init__':
+            # Skip __init__ and example files to avoid conflicts
+            if modname != '__init__' and not modname.startswith('example_'):
                 try:
                     importlib.import_module(f'.{modname}', package=package_name)
                 except ImportError:

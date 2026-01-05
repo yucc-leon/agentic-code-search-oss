@@ -4,6 +4,12 @@ description: "The agent only has access to read only tools"
 reward:
   - fn: tool_use_reward
   - fn: turn_efficiency
+  # Log eval-aligned localization metrics (does not affect training reward if weights=0)
+  - fn: multilevel_localization_f1_reward
+    args:
+      file_level_weight: 0.0
+      module_level_weight: 0.0
+      entity_level_weight: 0.0
 
 tools:
   - glob

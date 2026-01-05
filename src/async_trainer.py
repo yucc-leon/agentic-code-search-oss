@@ -77,6 +77,48 @@ def patched_concatenate_generator_outputs(generator_outputs: List[GeneratorOutpu
 
 class CustomFullyAsyncRayPPOTrainer(FullyAsyncRayPPOTrainer):
 
+    async def generate(self, generator_input):
+        """
+        Override generate method to fix validation logic for multi-turn conversations.
+        
+        In multi-turn conversations, each prompt can generate multiple responses
+        (one per turn), so we need to use the actual number of responses/prompts
+        from the generator output instead of the input batch size.
+        """
+        # Call parent generate method
+        generator_output = await super().generate(generator_input)
+        
+        # In multi-turn conversations, len(generator_output["response_ids"]) may be
+        # greater than len(generator_input["prompts"]) because each prompt can
+        # generate multiple responses (one per turn). We validate using the actual
+        # number of prompt_token_ids, which represents the true number of LLM calls.
+        from skyrl_train.utils.trainer_utils import validate_generator_output
+        
+        num_responses = len(generator_output["response_ids"])
+        num_prompt_token_ids = len(generator_output["prompt_token_ids"])
+        
+        # Validate consistency: each response should have a corresponding prompt
+        if num_responses != num_prompt_token_ids:
+            logger.error(
+                f"Critical mismatch: prompt_token_ids ({num_prompt_token_ids}) != "
+                f"response_ids ({num_responses}). Generator output is inconsistent."
+            )
+            raise ValueError(
+                f"Generator produced inconsistent output: {num_prompt_token_ids} prompts "
+                f"but {num_responses} responses. This indicates a bug in the generator."
+            )
+        
+        # Validate using the actual number of responses (which equals prompt_token_ids)
+        validate_generator_output(num_responses, generator_output)
+        
+        logger.info(
+            f"Generated {num_responses} responses for {len(generator_input['prompts'])} "
+            f"input prompts (avg {num_responses / len(generator_input['prompts']):.1f} "
+            f"turns per conversation)"
+        )
+        
+        return generator_output
+
     def convert_generation_group_mini_batch_to_training_input(
         self, cur_generation_group_mini_batch: List[GeneratedOutputGroup]
     ) -> TrainingInputBatch:

@@ -153,8 +153,9 @@ def get_simple_results_from_raw_outputs(
             # Has a class - extract it: "file.py:Class.method" → "file.py:Class"
             module = entity.rsplit(".", 1)[0]
         else:
-            # No class - use full entity: "file.py:function" → "file.py:function"
-            module = entity
+            # No class - use file as module: "file.py:function" → "file.py"
+            # This maintains the hierarchy: File < Module < Entity
+            module = entity.split(':')[0]
         if module not in modules:
             modules.append(module)
 

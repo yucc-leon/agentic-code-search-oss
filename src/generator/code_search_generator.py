@@ -45,6 +45,18 @@ from openhands.tools.preset.default import get_default_tools
 from openhands.tools.preset.planning import get_planning_tools
 from openhands.tools.terminal import TerminalTool
 from openhands.sdk.tool import Tool, register_tool
+
+# Import built-in tools to auto-register them
+import openhands.tools.glob
+import openhands.tools.grep
+import openhands.tools.apply_patch
+import openhands.tools.file_editor
+import openhands.tools.planning_file_editor
+import openhands.tools.task_tracker
+import openhands.tools.browser_use
+import openhands.tools.delegate
+import openhands.tools.preset
+import openhands.tools.tom_consult
 from openhands.sdk import (
     Agent,
     LLM,
@@ -60,7 +72,11 @@ from src.utils.instance import clone_instance
 from src.agent.agent import CustomAgent
 
 from src.rewards import get_reward_function
+<<<<<<< Updated upstream
 from src.tools import TOOL_REGISTRY, DEFAULT_OPENHANDS_TOOLS, import_openhands_tool
+=======
+from src.tools import TOOL_REGISTRY, DEFAULT_OPENHANDS_TOOLS
+>>>>>>> Stashed changes
 
 from src.metrics.efficiency_metrics import compute_all_efficiency_metrics
 from src.metrics.trajectory_metrics import compute_trajectory_metrics
@@ -93,7 +109,7 @@ def init_and_run(
     
     # Avoid collisions in /tmp testbed directories
     uuid_str = str(uuid.uuid4())[:8]
-    workspace = Path(f"/tmp/testbed/{uuid_str}/")
+    workspace = Path(os.environ.get("TESTBED_ROOT", "/tmp/testbed")) / uuid_str
     status, working_dir = clone_instance(repo_name, commit_id, instance_id, workspace)
 
     if training_phase == "eval":
@@ -104,7 +120,16 @@ def init_and_run(
     final_message = ""
     messages = []
 
+    # Ray worker processes may start with an empty OpenHands tool registry.
+    # Import built-in tools here to ensure self-registration in *this* process.
+    from openhands.sdk.tool import registry as _tool_registry  # noqa: F401
+    import openhands.tools.glob  # noqa: F401
+    import openhands.tools.grep  # noqa: F401
+    import openhands.tools.terminal  # noqa: F401
+
+    # Register custom tools (built-in tools don't need registration)
     for tool_name in generator_cfg.tools:
+<<<<<<< Updated upstream
         # Import OpenHands tools to trigger their registration
         if tool_name in DEFAULT_OPENHANDS_TOOLS:
             import_openhands_tool(tool_name)
@@ -113,6 +138,14 @@ def init_and_run(
             register_tool(tool_name, TOOL_REGISTRY[tool_name])
         else:
             raise ValueError(f"Tool {tool_name} does not exist in the registry or default OpenHands tools")
+=======
+        if tool_name in TOOL_REGISTRY:
+            # Custom tool - needs registration
+            register_tool(tool_name, TOOL_REGISTRY[tool_name])
+        elif tool_name not in DEFAULT_OPENHANDS_TOOLS:
+            # Not a built-in tool and not in custom registry
+            raise ValueError(f"Tool {tool_name} does not exist in the registry")
+>>>>>>> Stashed changes
 
     tools = [
         Tool(name=tool_name) for tool_name in generator_cfg.tools
@@ -140,14 +173,31 @@ def init_and_run(
         system_prompt_filename=system_prompt_path
     )
 
-    conversation = Conversation(
-        agent=agent,
-        max_iteration_per_run=10,
-        visualizer=None,
-        workspace=str(working_dir),
-    )
-    input_message = get_instruction(instance, user_prompt_path, str(working_dir))
-    conversation.send_message(input_message)
+    # Create conversation with max_iteration_per_run limit
+    conversation = None
+    try:
+        conversation = Conversation(
+            agent=agent,
+            max_iteration_per_run=10,
+            visualizer=None,
+            workspace=str(working_dir),
+        )
+        input_message = get_instruction(instance, user_prompt_path, str(working_dir))
+        conversation.send_message(input_message)
+    except Exception:
+        # Conversation initialization can fail early (e.g., tool registry mismatch).
+        # Ensure we don't leak /tmp testbed clones in that case.
+        try:
+            if workspace.exists():
+                os.system(f"rm -rf {str(workspace)}")
+        except Exception:
+            logger.error(f"Error removing workspace {str(workspace)}:\n{traceback.format_exc()}")
+        try:
+            if conversation is not None:
+                conversation.close()
+        except Exception:
+            logger.error(f"Error closing conversation:\n{traceback.format_exc()}")
+        raise
 
     logger.info("Conversation Starting")
 
@@ -155,21 +205,26 @@ def init_and_run(
     start_time = time.time()
     start_timestamp = datetime.now().isoformat()
 
-    conversation.run()
-
-    messages = list(map(lambda event: event.model_dump(), conversation.state.events))
-    final_message = get_agent_final_response(conversation.state.events)
-
-    # remove the workspace dir
     try:
-        if workspace.exists():
-            os.system(f"rm -rf {str(workspace)}")
-            logger.info(f"Removed workspace {str(workspace)}")
-    except Exception as e:
-        logger.error(f"Error removing workspace {str(workspace)}: {e}", exc_info=True)
+        conversation.run()
 
+        messages = list(map(lambda event: event.model_dump(), conversation.state.events))
+        final_message = get_agent_final_response(conversation.state.events)
+    finally:
+        # Always clean up the cloned workspace, even if Conversation init/run fails.
+        try:
+            if workspace.exists():
+                os.system(f"rm -rf {str(workspace)}")
+        except Exception:
+            # Avoid passing exception objects through loguru multiprocessing handler
+            logger.error(
+                f"Error removing workspace {str(workspace)}:\n{traceback.format_exc()}"
+            )
+        try:
+            conversation.close()
+        except Exception:
+            logger.error(f"Error closing conversation:\n{traceback.format_exc()}")
 
-    conversation.close()
     logger.info("Conversation Finished")
 
     # Capture end time
@@ -248,7 +303,8 @@ class CodeSearchGenerator(SkyRLGymGenerator):
                 batch_metadata.training_phase,
             )
         except Exception as e:
-            logger.error(f"Error in starting conversation: {e}", exc_info=True)
+            # Avoid passing exception objects through loguru multiprocessing handler
+            logger.error(f"Error in starting conversation: {e}\n{traceback.format_exc()}")
             # TODO properly handle this
             error = str(e) + "\n" + traceback.format_exc()
             messages = []
@@ -440,27 +496,59 @@ class CodeSearchGenerator(SkyRLGymGenerator):
             
             task_rollouts.append(rollout)
 
-        collected_task_rollouts = await asyncio.gather(*task_rollouts)
+        # Use return_exceptions=True to handle partial failures gracefully
+        collected_task_rollouts = await asyncio.gather(*task_rollouts, return_exceptions=True)
 
-        all_outputs = [rollout[0] for rollout in collected_task_rollouts]
-        rewards_dict = [rollout[1] for rollout in collected_task_rollouts]
-        metrics_dict = [rollout[2] for rollout in collected_task_rollouts]
+        # Separate successful results from exceptions
+        all_outputs = []
+        rewards_dict = []
+        metrics_dict = []
+        failed_count = 0
+        
+        for i, rollout in enumerate(collected_task_rollouts):
+            if isinstance(rollout, Exception):
+                # Log the error but continue with other rollouts
+                logger.error(
+                    f"Failed to generate rollout for prompt {i} "
+                    f"(trajectory_id={trajectory_ids[i]}): {rollout}",
+                    exc_info=rollout
+                )
+                failed_count += 1
+                # Create a minimal error rollout to maintain batch structure
+                error_response_ids = [151643]  # Default error token
+                error_rollout = [
+                    (error_response_ids, -10.0, "error", [1], [151643], None, {})
+                ]
+                all_outputs.append(error_rollout)
+                rewards_dict.append({})
+                metrics_dict.append({})
+            else:
+                all_outputs.append(rollout[0])
+                rewards_dict.append(rollout[1])
+                metrics_dict.append(rollout[2])
+        
+        if failed_count > 0:
+            logger.warning(
+                f"Generation completed with {failed_count}/{len(prompts)} failures. "
+                f"Success rate: {(len(prompts) - failed_count) / len(prompts) * 100:.1f}%"
+            )
 
-        responses = sum([[output[0] for output in step_outputs] for step_outputs in all_outputs], [])
-        rewards = sum([[output[1] for output in step_outputs] for step_outputs in all_outputs], [])
-        stop_reasons = sum([[output[2] for output in step_outputs] for step_outputs in all_outputs], [])
-        loss_masks = sum([[output[3] for output in step_outputs] for step_outputs in all_outputs], [])
-        prompt_token_ids = sum([[output[4] for output in step_outputs] for step_outputs in all_outputs], [])
+        # Only take the last step output for each trajectory to match prompt count
+        responses = [step_outputs[-1][0] for step_outputs in all_outputs]
+        rewards = [step_outputs[-1][1] for step_outputs in all_outputs]
+        stop_reasons = [step_outputs[-1][2] for step_outputs in all_outputs]
+        loss_masks = [step_outputs[-1][3] for step_outputs in all_outputs]
+        prompt_token_ids = [step_outputs[-1][4] for step_outputs in all_outputs]
 
+        # Since we only return the last step for each trajectory
         out_trajectory_ids = []
         is_last_step = []
         for i in range(len(all_outputs)):
             step_outputs = all_outputs[i]
-            for step_id in range(len(step_outputs)):
-                out_trajectory_id = copy.deepcopy(trajectory_ids[i])
-                out_trajectory_id.step = step_id
-                out_trajectory_ids.append(out_trajectory_id.instance_id)
-                is_last_step.append(step_id == len(step_outputs) - 1)
+            out_trajectory_id = copy.deepcopy(trajectory_ids[i])
+            out_trajectory_id.step = len(step_outputs) - 1  # Set to the last step index
+            out_trajectory_ids.append(out_trajectory_id.instance_id)
+            is_last_step.append(True)  # Always True since we only return last steps
 
         if not len(responses):
             raise ValueError(
@@ -487,6 +575,13 @@ class CodeSearchGenerator(SkyRLGymGenerator):
         for k, v in tracked_metrics.items():
             tracked_metrics[k] = sum(v) / len(v)
 
+        # IMPORTANT: skyrl_train only logs generator_output["rollout_metrics"] to tracker/wandb.
+        # Merge our custom aggregated metrics into rollout_metrics so they are visible in wandb.
+        rollout_metrics = {
+            **rollout_metrics,
+            **tracked_metrics,
+        }
+
         generator_output: GeneratorOutput = {
             "trajectory_ids": out_trajectory_ids,
             "prompt_token_ids": prompt_token_ids,
@@ -497,7 +592,6 @@ class CodeSearchGenerator(SkyRLGymGenerator):
             "rollout_metrics": rollout_metrics,
             "rollout_logprobs": None,
             "is_last_step": is_last_step,
-            **tracked_metrics,
         }
 
         return generator_output

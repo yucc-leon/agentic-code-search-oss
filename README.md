@@ -77,6 +77,7 @@ This is a community-driven project.
   - [NVIDIA Nemotron-CORTEXA](https://github.com/NVIDIA/Nemotron-CORTEXA)
   - [LocAgent: Graph-Guided LLM Agents](https://arxiv.org/abs/2503.09089)
   - [SWE-Fixer: Open-Source LLMs for Issue Resolution](https://arxiv.org/abs/2501.05040)
+  - [SID-1 Technical Report: Test-Time Compute for Retrieval](https://www.sid.ai/research/sid-1-technical-report)
 - **Datasets:**
   - [CodeSearchNet](https://github.com/github/CodeSearchNet)
   - [SWE-Fixer-Train-110K](https://huggingface.co/datasets/internlm/SWE-Fixer-Train-110K)

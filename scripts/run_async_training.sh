@@ -25,6 +25,15 @@ MAX_LENGTH=8192
 RUN_NAME="code_search_${MODEL_ALIAS}"
 set -x
 
+# Redirect Ray + testbed temp dirs away from /tmp to avoid filling local disk.
+# Ray will create large session dirs (e.g., session_*/runtime_resources/working_dir_files).
+export RAY_TMPDIR="${RAY_TMPDIR:-/tmpworkspace/ray}"
+export TMPDIR="${TMPDIR:-/tmpworkspace/tmp}"
+export TMP="${TMP:-$TMPDIR}"
+export TEMP="${TEMP:-$TMPDIR}"
+export TESTBED_ROOT="${TESTBED_ROOT:-/tmpworkspace/testbed}"
+mkdir -p "$RAY_TMPDIR" "$TMPDIR" "$TESTBED_ROOT"
+
 DATA_PATH="${DATA_PATH:-data/swe_smith}"
 CKPT_PATH="${CKPT_PATH:-$(pwd)/ckpts/${MODEL_ALIAS}}"
 mkdir -p $CKPT_PATH
@@ -36,7 +45,7 @@ NUM_TRAINING_ENGINES="${NUM_TRAINING_ENGINES:-$HALF_NUM_GPUS}"
 export VLLM_FLASH_ATTN_VERSION=2
 export CUDA_LAUNCH_BLOCKING=1
 export TORCH_USE_CUDA_DSA=1
-
+export WANDB_API_KEY=b12e5c53666f53623127f4bb3c74227b637ece8b
 uv run --isolated -m src.train \
   +run_async_trainer=true \
   data.train_data="['$DATA_PATH/train.parquet']" \
@@ -61,7 +70,7 @@ uv run --isolated -m src.train \
   +generator.engine_init_kwargs.enable_auto_tool_choice=true \
   +generator.engine_init_kwargs.tool_call_parser=hermes \
   +generator.engine_init_kwargs.reasoning_parser=qwen3 \
-  trainer.epochs=20 \
+  trainer.epochs=5 \
   trainer.eval_batch_size=100 \
   trainer.eval_before_train=false \
   trainer.eval_interval=100 \
@@ -72,13 +81,13 @@ uv run --isolated -m src.train \
   trainer.micro_train_batch_size_per_gpu=${MICRO_BATCH_SIZE:-1} \
   trainer.dump_data_batch=true \
   trainer.export_path="${CKPT_PATH}exported_model/" \
-  trainer.hf_save_interval=5 \
-  trainer.ckpt_interval=5 \
+  trainer.hf_save_interval=20 \
+  trainer.ckpt_interval=20 \
   trainer.max_prompt_length=4096 \
   generator.sampling_params.max_generate_length=${MAX_LENGTH} \
   generator.sampling_params.temperature=1.0 \
-  generator.max_input_length=24000 \
-  generator.max_num_batched_tokens=48000 \
+  generator.max_input_length=32000 \
+  generator.max_num_batched_tokens=40000 \
   generator.max_turns=20 \
   trainer.policy.optimizer_config.lr=1.0e-6 \
   trainer.algorithm.use_kl_loss=False \
@@ -90,7 +99,6 @@ uv run --isolated -m src.train \
   generator.weight_sync_backend=nccl \
   generator.async_engine=true \
   generator.batched=false \
-  generator.n_samples_per_prompt=${N_ROLLOUTS} \
   generator.gpu_memory_utilization=0.75 \
   generator.enforce_eager=false \
   trainer.step_wise_training=true \

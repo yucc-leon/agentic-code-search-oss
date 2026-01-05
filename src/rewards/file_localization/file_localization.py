@@ -86,9 +86,14 @@ def multilevel_localization_f1_reward(
 
     return reward, {
         "multilevel_localization_f1_reward": reward,
+        # Keep legacy keys (already used in some dashboards)
         "file_reward": file_f1_score,
         "module_reward": module_f1_score,
         "entity_reward": entity_f1_score,
+        # Add eval-aligned keys (see METRICS_GUIDE.md)
+        "file_localization_reward": file_f1_score,
+        "module_localization_reward": module_f1_score,
+        "entity_localization_reward": entity_f1_score,
         # "prediction": {
         #     "files": list(predicted_files),
         #     "modules": list(predicted_modules),
